@@ -12,22 +12,23 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#define N_PRODUCERS 16
-#define M_CONSUMERS 5
+#define N_PRODUCERS 2
+#define M_CONSUMERS 1
 
-#define MAX_BUFFER 8 ///
+#define MAX_BUFFER 5 ///
 int buffer[MAX_BUFFER]; ///
 int n_elements = 0; ///
+int fin = 0;
 
-#define MAX_ELEMENTS 16 /// Given by file (read) CHANGE!!
+#define MAX_ELEMENTS 10 /// Given by file (read) CHANGE!!
 
 
 int started = 0; //0 -> 'false', 1 -> 'true'
 pthread_mutex_t mutex;
 pthread_cond_t start;
 
-pthread_cond_t full;
-pthread_cond_t empty;
+pthread_cond_t notFull; 
+pthread_cond_t notEmpty;
 
 void *producer(void *param) {
 	// Users through ATM 'produce' bank operations
@@ -45,20 +46,24 @@ void *producer(void *param) {
 	
 	//Producing
 	for (int i = 0; i < MAX_ELEMENTS; i++){
-		
-		pthread_mutex_lock(&mutex);
-		while (n_elements == MAX_ELEMENTS){ /// while queue is full
-			pthread_cond_wait(&full, NULL); // CHECK 
-		}
+	
 		p = i;
 		printf("PRODUCER: %d, Petition_value: %d, ElementId: %d\n", id, i, p);
 		
-		///call my queue
+		// Critical section beggin:
+		pthread_mutex_lock(&mutex);
+		while (n_elements == MAX_ELEMENTS){ /// while queue is full
+			pthread_cond_wait(&notFull, &mutex); // CHECK 
+		}
+		
+		// Insert in circular buffer the produced element
+		///call our queue instead
 		buffer[pos] = p;
 		pos = (pos + 1) % MAX_BUFFER;
 		n_elements++;
 		
-		pthread_cond_signal(&full);
+		// New element produced warn and critical section end:
+		pthread_cond_signal(&notEmpty); 
 		pthread_mutex_unlock(&mutex);
 	}
 	
@@ -85,18 +90,32 @@ void *consumer(void *param) {
 	pthread_mutex_unlock(&mutex);
 	
 	//Consuming
-	
 	for (int i = 0; ; i++){
 		
+		// Critical section beggin
 		pthread_mutex_lock(&mutex);
 		while (n_elements == 0){ // while queue is empty
-			pthread_signal_wait(&empty, NULL); // CHECK 
+			if (fin == 1) // Queue is empty and we have finished
+			{
+				printf("Consumer: %d. End\n", id);
+				pthread_mutex_unlock(&mutex);
+				pthread_exit(0);
+			}
+			
+			// Queue is empty but we have NOT finished
+			pthread_cond_wait(&notEmpty, &mutex); // Sleep until queue is not empty
 		}
-		///call my queue
-		//p = myQueue;
 		
-		//printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, i, p);
-		pthread_cond_signal(&empty);
+		// Remove consumed element from circular buffer
+		///call our queue instead
+		buffer[pos] = p; 
+		pos = (pos + 1) % MAX_BUFFER; 
+		n_elements--; 
+		
+		printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, i, p);
+		
+		// Element consumed warn and critical section end:
+		pthread_cond_signal(&notFull);
 		pthread_mutex_unlock(&mutex);
 
 	}
@@ -104,7 +123,7 @@ void *consumer(void *param) {
 	// End producer execution
 	printf("Consumer: %d. End\n", id);
 	pthread_exit(0);
-	return NULL;
+	return (void*)(long)1;
 }
 	
 
@@ -120,12 +139,15 @@ int main (int argc, const char * argv[] ) {
 	// {Read
 	// ...
 	// Read}
-
+	
+	void *retval;
 	pthread_t threads[N_PRODUCERS + M_CONSUMERS];
 	
 	// initialize
 	pthread_mutex_init(&mutex, NULL);
 	pthread_cond_init(&start, NULL);
+	pthread_cond_init(&notFull, NULL);
+	pthread_cond_init(&notEmpty, NULL);
 	
 	// create PRODUCERS
 	for (int i=0; i<N_PRODUCERS; i++) {
@@ -153,19 +175,25 @@ int main (int argc, const char * argv[] ) {
 	
 	// wait PRODUCERS exectution end
 	for (int i=0; i<N_PRODUCERS; i++) {
-		pthread_join(threads[i], NULL);
+		pthread_join(threads[i], &retval);
 	}
 	
 	// CONSUMERS get the signal when PRODUCERS exectution end
+	pthread_mutex_lock(&mutex);
+	fin = 1;
+	pthread_cond_broadcast(&notEmpty);
+	pthread_mutex_unlock(&mutex);
 	
 	// wait CONSUMERS exectution end
 	for (int i=0; i<M_CONSUMERS; i++) {
-		pthread_join(threads[N_PRODUCERS + i], NULL);
+		pthread_join(threads[N_PRODUCERS + i], &retval);
 	}
 	
 	// destroy
 	pthread_mutex_destroy(&mutex);
 	pthread_cond_destroy(&start);
+	pthread_cond_destroy(&notFull);
+	pthread_cond_destroy(&notEmpty);
 	
 	return 0;
 }
