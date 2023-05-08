@@ -24,9 +24,10 @@ queue* queue_init(int size){
 
 // To Enqueue an element
 int queue_put(queue *q, struct element* x) {
-	if (queue_full(queue *q) == 0) {  // If queue is not full
+	if (queue_full(q) == 0) {  // If queue is not full
 		q -> tail = (q -> tail + 1) % q -> size;
 		q -> data[q -> tail] = *x;
+		q -> length++;
 		return 0;
 	}
 	return -1;
@@ -37,10 +38,10 @@ int queue_put(queue *q, struct element* x) {
 struct element* queue_get(queue *q) {
 	struct element* element;
 
-	if (queue_empty(queue *q) == 0) {  // If queue is not empty
+	if (queue_empty(q) == 0) {  // If queue is not empty
 		element = &(q -> data[q -> head]);
 		q -> head = (q -> head + 1) % q -> size;
-		q -> length -= 1;
+		q -> length--;
 	}
 	return element;
 }
