@@ -11,8 +11,8 @@
 //To create a queue
 queue* queue_init(int size){
 
-	queue * q = (queue *)malloc(sizeof(queue));
-	q -> data = malloc(size * sizeof(struct element));
+	queue * q = (queue *)malloc(sizeof(queue)); //esto no hay que hacerlo
+	q -> data = (struct element*)malloc(size * sizeof(struct element)); //faltaba añadir tambien el tipo de pointer
 	q -> head = 0;
 	q -> tail = 0;
 	q -> length = 0;
