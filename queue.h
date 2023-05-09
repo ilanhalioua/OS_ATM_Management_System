@@ -20,11 +20,11 @@ struct CircularQueue
 
 typedef struct CircularQueue CQ; //shortcut to refer to the type struct CircularQueue
 
-queue* queue_init (int size);
-int queue_destroy (queue *q);
-int queue_put (queue *q, struct element* elem);
-struct element * queue_get(queue *q);
-int queue_empty (queue *q);
-int queue_full(queue *q);
+CQ *cq_init(int s);
+int cq_destroy(CQ *cq);
+int cq_enqueue(CQ *q, struct element* elem);
+struct element * cq_dequeue(CQ *cq);
+int cq_empty(CQ *cq);
+int cq_full(CQ *cq);
 
 #endif
