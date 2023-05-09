@@ -26,3 +26,24 @@ int queue_empty (queue *q);
 int queue_full(queue *q);
 
 #endif
+
+int main(void)
+{
+    queue *Q = queue_init(10);
+    int a = 0;
+    struct element e;
+    for(int i = 0; i<5; i++)
+    {
+        printf("%d element insertion: \n",i);
+        scanf("%d account n# -> ",&a);
+        e.account_number = a;
+        queue_put(Q, &e);
+    }
+    printf(" Queue details : \n");
+    printf("Head : %d, Tail : %d, Length : %d, Size : %d\n",Q->head, Q->tail, Q->length, Q->size);
+    for(int j = 0; j<5; j++)
+    {
+        printf("%d Element's account number is %d\n", j+1, queue_get(Q)->account_number);
+    }
+    return 0;
+}
