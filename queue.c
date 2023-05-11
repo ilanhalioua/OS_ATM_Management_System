@@ -3,155 +3,329 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <stddef.h>
+#include <sys/stat.h>
+#include <pthread.h>
 #include "queue.h"
+#include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
+int N_PRODUCERS;
+int M_CONSUMERS;
 
+#define MAX_LINE_LENGTH 100 ///
+#define MAX_OPS 200 ///
+int num_ops;
 
+int fin = 0;
+struct queue *circular_queue;
+struct element *list_client_ops;
 
-struct CircularQueue
-{
-    int head; //index for the first element in the queue
-    int tail; //index for the last element in the queue
-    int size; // fixed amount of data capable of storing
-    int *data; // actual array of length size of data to store
-};
+#define MAX_ELEMENTS 10 /// Given by file (read) CHANGE!! -> num_ops
 
-typedef struct CircularQueue CQ; //shortcut to refer to the type struct CircularQueue
+// ./bank <file name> <num ATMs> <num workers> <max accounts> <buff size>
 
+int started = 0; //0 -> 'false', 1 -> 'true'
+pthread_mutex_t mutex;
+pthread_cond_t start;
 
-CQ *cq_init(int s); //circular queue constructor
-void cq_destroy(CQ *cq) //circular queue structure destructor
-{
-    //first, free its content array from the heap and then the object pointer
-    free(cq->data);
-    free(cq);
-}
-int cq_empty(CQ *cq); //checks if the queue is empty
-int cq_full(CQ *cq); //check if the queue is full
-int cq_enqueue(CQ *cq, int e); //circular queue function to enqueue data
-int *cq_dequeue(CQ *cq); //circular queue function to dequeue data
-void cq_show(CQ *cq) //prints the order of the cqueue on screen
-{
-    for(int i = 0; i<cq->size; i++)
-    {
-        printf("%d\t",cq->data[i]);
-    }
-}
+pthread_cond_t notFull; 
+pthread_cond_t notEmpty;
 
-int main()
-{
+float total = 0.0;
+float balance[];
 
-    printf("Enter the size of the circular queue to construct here : ");
-    int s;
-    scanf("%d",&s);
-    CQ *mycq;
-    mycq = cq_init(s);
-    int ask; //1 for inserting, 0 for removing from the cqueue mycq
-    printf("Insert(1) or remove(0) : ");
-    scanf("%d",&ask);
-    int d;
-    int *val;
-    while(ask == 1 || ask == 0)
-    {
-        if(ask)
-        {
-            printf("Element to insert-> ");
-            scanf("%d",&d);
-            if(cq_enqueue(mycq, d) == -1)
-            {
-                printf("Cannot enqueue!The queue is full at the moment\n");
-            }
-            else
-            {
-                printf("Element was added succesfully!\n");
-            }
-        }
-        else
-        {
-            int *val = cq_dequeue(mycq);
-            if(val == NULL)
-            {
-                printf("Cannot dequeue!The queue is empty at the moment\n");
-            }
-            else
-            {
-                printf("Dequed element -> %d\n",*val);
-            }
-        }
-        cq_show(mycq);
-        printf("Insert(1) or remove(0) : ");
-        scanf("%d",&ask);
-        
-    }
-    cq_destroy(mycq); 
-    printf("The circular queue has been destroyed !\n");
+void *ATM(void *param) { // Producer thread
+	// Users through ATM 'produce' bank operations
+	
+	int id;
+	struct element elem;
+	
+	// Producer thread has started:
+	if (pthread_mutex_lock(&mutex) < 0){
+    		perror("Mutex error");
+    		exit(-1);
+  	}
+	started = 1;
+	id = *((int *)param);
+	pthread_cond_signal(&start); // data has been copied
+	if (pthread_mutex_unlock(&mutex) < 0){
+    		perror("Mutex error");
+    		exit(-1);
+  	}
+	
+	//Producing
+	for (int client_numops = 0; client_numops < num_ops; client_numops++){ //Change MAX_ELEMENTS to num_ops (given by line 1 of file.txt)
+	
+		elem = list_client_ops[client_numops];
+		/////printf("PRODUCER: %d, Petition_value: %d, ElementId: %d, Amount: %f\n", id, client_numops, elem.operation_id, elem.amount);
+		
+		// Critical section beggin:
+		if (pthread_mutex_lock(&mutex) < 0){
+    			perror("Mutex error");
+    			exit(-1);
+  		}
+		while (queue_full(circular_queue)){ /// while queue is full
+			if (pthread_cond_wait(&notFull, &mutex) < 0){
+				perror("Condition variable error");
+    				exit(-1);
+			}
+		}
+		
+		// Insert in circular buffer the produced element
+		if(queue_put(circular_queue, &elem) < 0){
+		      perror("Failed to enqueue an element");
+		      exit(-1);
+		}
+		    
+		// New element produced warn and critical section end:
+		if(pthread_cond_signal(&notEmpty) < 0){
+		      perror("Error while warning that queue is not empty");
+		      exit(-1);
+		}
+		if (pthread_mutex_unlock(&mutex) < 0){
+    			perror("Mutex error");
+    			exit(-1);
+  		}
+	}
+	
+	
+	// End producer execution
+	printf("Producer: %d. End\n", id);
+	pthread_exit(0);
+	return NULL;
 
-    return 0;
-}
- CQ *cq_init(int s)
-{
-    CQ *cq = (CQ*)malloc(sizeof(CQ)); //allocate a cq in the heap
-    cq->size = s;
-    cq->data = (int*)malloc(s*sizeof(int));//allocate the array it holds as content attribute in the heap
-    cq->head = -1; //by default, initially head and tail are both equal to -1
-    cq->tail = -1; 
-    return cq;
 }
 
-int cq_empty(CQ *cq)
-{
-    if(cq->head == -1 && cq->tail == -1) //by default this means that the queue is empty
-    {
-        return 1;
-    }
-    return 0;
+void *Worker(void *param) { // Consumer thread
+	// Workers 'consume' the ATM operations introduced by the producers to the circular queue
+	
+	int id;
+	struct element* data;
+	
+	// Consumer thread has started:
+	pthread_mutex_lock(&mutex);
+	started = 1;
+	id = *((int *)param);
+	pthread_cond_signal(&start); // data has been copied
+	pthread_mutex_unlock(&mutex);
+	
+	//Consuming
+	for (int worker_numops = 0; ; worker_numops++){
+		
+		// Critical section beggin
+		pthread_mutex_lock(&mutex);
+		while (queue_empty(circular_queue)){ // while queue is empty
+			if (fin == 1) // Queue is empty and we have finished
+			{
+				/////printf("Consumer: %d. End\n", id);
+				pthread_mutex_unlock(&mutex);
+				pthread_exit(0);
+			}
+			
+			// Queue is empty but we have NOT finished
+			pthread_cond_wait(&notEmpty, &mutex); // Sleep until queue is not empty
+		}
+		
+		// Remove consumed element from circular buffer
+		data = queue_get(circular_queue);	
+		
+		switch (data->operation_id) {
+		    case 1: // CREATE
+		      balance[data->account_number] = 0;
+		      printf("%d CREATE %d BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, balance[data->account_number], total);
+		      break;
+		    case 2: // DEPOSIT
+		      balance[data->account_number] += data->amount;
+		      total += data->amount;
+		      printf("%d DEPOSIT %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, data->amount, balance[data->account_number], total);
+		      break;
+		    case 3: // TRANSFER
+		      // Total stays the same (Balance of the accounts change)
+		      balance[data->acc_from] -= data->amount;
+		      balance[data->acc_to] += data->amount;
+		      printf("%d TRANSFER %d %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->acc_from, data->acc_to, data->amount, balance[data->acc_to], total);
+		      break;
+		    case 4: // WITHDRAW
+		      balance[data->account_number] -= data->amount;
+		      total -= data->amount;
+		      printf("%d WITHDRAW %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, data->amount, balance[data->account_number], total);
+		      break;
+		    case 5: // BALANCE
+		      // Nada creo
+		      printf("%d BALANCE %d BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, balance[data->account_number], total);
+		      break;
+		    default:
+		      perror("Not valid operation");
+		} 
+		
+		/////printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, worker_numops, data->operation_id);
+		// Element consumed warn and critical section end:
+		pthread_cond_signal(&notFull);
+		pthread_mutex_unlock(&mutex);
+
+	}
+	
+	// End producer execution
+	/////printf("Consumer: %d. End\n", id);
+	pthread_exit(0);
+	return (void*)(long)1;
 }
+	
 
-int cq_full(CQ *cq)
-{
-    if(cq_empty(cq))
-    {
-        return 0;
-    }
-    if((cq->tail +1)%cq->size == cq->head)
-    {
-        return 1;
-    }
-    return 0;
-}
+/**
+ * Entry point
+ * @param argc
+ * @param argv
+ * @return
+ */
+ 
+ 
+int main (int argc, const char * argv[] ) {
 
+	list_client_ops = (struct element*)malloc(MAX_OPS * sizeof(struct element)); //array of elements to be inserted by main process from the text file
+	int size = atoi(argv[5]);
+	circular_queue = queue_init(size);
+	
+	if (argc != 6) {
+    		perror("Invalid number of arguments\nUsage: ./bank <file name> <num ATMs> <num workers> <max accounts> <buff size>");
+    		return -1;
+  	}
+  	
+  	N_PRODUCERS = atoi(argv[2]);
+	M_CONSUMERS = atoi(argv[3]);
+  	
+  	balance[atoi(argv[4])];
+	
+	// 1) READ FROM FILE
+	
+	FILE *fp = fopen(argv[1], "r");
+	    if (fp == NULL) {
+		perror("Error opening file");
+		return -1;
+	    }
+	    
+	    
+	    
+	    //Falta lectura de la primera linea del file!! (Y control de errores)
+	    if(fscanf(fp, "%d\n", &num_ops) < 0){
+    		perror("Error retrieving data from input file");
+    		exit(-1);
+  	    }
+	    printf("Number of Operations to be processed: %d\n\n", num_ops);
 
+	    char line[MAX_LINE_LENGTH];
+	    int i = 0;
+	    while (fgets(line, MAX_LINE_LENGTH, fp) != NULL) {
+	    	// Initialize amount to 0 for each new element
+        	list_client_ops[i].amount = 0.0;
+	    
+		char *token = strtok(line, " ");
+		if (strcmp(token, "CREATE") == 0) {
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].operation_id = 1;
+		    list_client_ops[i].account_number = atoi(token);
+		    /////printf("Element: list_client_ops[%d] -> opId = %d (CREATE), accNum = %d\n",i, list_client_ops[i].operation_id, list_client_ops[i].account_number);
+		} else if (strcmp(token, "DEPOSIT") == 0) {
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].operation_id = 2;
+		    list_client_ops[i].account_number = atoi(token);
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].amount = atof(token);
+		    /////printf("Element: list_client_ops[%d] -> opId = %d (DEPOSIT), accNum = %d, amount = %.2f\n",i, list_client_ops[i].operation_id, list_client_ops[i].account_number, list_client_ops[i].amount);
+		} else if (strcmp(token, "TRANSFER") == 0) {
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].operation_id = 3;
+		    list_client_ops[i].acc_from = atoi(token);
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].acc_to = atoi(token);
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].amount = atof(token);
+		    /////printf("Element: list_client_ops[%d] -> opId = %d (TRANSFER), acc_from = %d, acc_to = %d, amount = %.2f\n",i, list_client_ops[i].operation_id, list_client_ops[i].acc_from, list_client_ops[i].acc_to, list_client_ops[i].amount);
+		} else if (strcmp(token, "WITHDRAW") == 0) {
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].operation_id = 4;
+		    list_client_ops[i].account_number = atoi(token);
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].amount = atof(token);
+		    /////printf("Element: list_client_ops[%d] -> opId = %d (WITHDRAW), accNum = %d, amount = %.2f\n",i, list_client_ops[i].operation_id, list_client_ops[i].account_number, list_client_ops[i].amount);
+		} else if (strcmp(token, "BALANCE") == 0) {
+		    token = strtok(NULL, " ");
+		    list_client_ops[i].operation_id = 5;
+		    list_client_ops[i].account_number = atoi(token);
+		    /////printf("Element: list_client_ops[%d] -> opId = %d (BALANCE), accNum = %d\n",i, list_client_ops[i].operation_id, list_client_ops[i].account_number);
+		}
+		i++;
+	    }
 
-int cq_enqueue(CQ *cq, int e)
-{
-    if(!cq_full(cq)) //check first if the queue is full 
-    {
-        if(cq_empty(cq)) //then, in this special case, recall that we must set head to 0 since it is -1
-        {
-            cq->head = 0;
-        }
-        cq->data[(cq->tail+1)%cq->size] = e; //then, insert it at tail+1 and update the value of tail
-        cq->tail = (cq->tail +1)%cq->size;
-        return 1;
-    }
-    return -1;
-}
-
-int *cq_dequeue(CQ *cq)
-{
-    if(!cq_empty(cq)) //check first if the queue is empty already
-    {
-        int *e = &cq->data[cq->head]; //element to drop off the queue
-        if(cq->head == cq->tail) //only one element so after dequeing, set the head and tail to -1
-        {
-            cq->head = -1;
-            cq->tail = -1;
-            return e;
-        }
-        //if not the only one element then, increment modulo size the value of head
-        cq->head = (cq->head+1)%cq->size;
-        return e;
-    }
-    return NULL;
-
+	    fclose(fp);
+	    
+	// FINISH READING
+	
+	// ------ delete
+	/////printf("\n\n");
+	/////printf("ElementId Leyend:\n1 -> 'CREATE', 2 -> 'DEPOSIT', 3 -> 'TRANSFER', 4 -> 'WITHDRAW', 5 -> 'BALANCE'\n");
+	/////printf("\n");
+	// ------ delete
+	
+	void *retval;
+	pthread_t threads[N_PRODUCERS + M_CONSUMERS];
+	
+	// initialize
+	pthread_mutex_init(&mutex, NULL);
+	pthread_cond_init(&start, NULL);
+	pthread_cond_init(&notFull, NULL);
+	pthread_cond_init(&notEmpty, NULL);
+	
+	// create PRODUCERS
+	for (int i=0; i<N_PRODUCERS; i++) {
+		pthread_create(&(threads[i]), NULL, ATM, &i);
+		
+		pthread_mutex_lock(&mutex);
+		while (!started) {
+			pthread_cond_wait(&start, &mutex);
+		}
+		started = 0;
+		pthread_mutex_unlock(&mutex);
+	}
+	
+	// create CONSUMERS
+	for (int i=0; i<M_CONSUMERS; i++) {
+		pthread_create(&(threads[N_PRODUCERS + i]), NULL, Worker, &i);
+		
+		pthread_mutex_lock(&mutex);
+		while (!started) {
+			pthread_cond_wait(&start, &mutex);
+		}
+		started = 0;
+		pthread_mutex_unlock(&mutex);
+	}
+	
+	// wait PRODUCERS exectution end
+	for (int i=0; i<N_PRODUCERS; i++) {
+		pthread_join(threads[i], &retval);
+	}
+	
+	// CONSUMERS get the signal when PRODUCERS exectution end
+	pthread_mutex_lock(&mutex);
+	fin = 1;
+	pthread_cond_broadcast(&notEmpty);
+	pthread_mutex_unlock(&mutex);
+	
+	// wait CONSUMERS exectution end
+	for (int i=0; i<M_CONSUMERS; i++) {
+		pthread_join(threads[N_PRODUCERS + i], &retval);
+	}
+	
+	// destroy
+	pthread_mutex_destroy(&mutex);
+	pthread_cond_destroy(&start);
+	pthread_cond_destroy(&notFull);
+	pthread_cond_destroy(&notEmpty);
+	
+	free(list_client_ops);
+	
+	return 0;
 }
