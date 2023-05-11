@@ -61,9 +61,8 @@ void *ATM(void *param) { // Producer thread
 	
 	//Producing
 	while(client_numops < amount_to_produce) //producer(atm) must work while there are operations to produce
-	{
+	{	
 	
-		elem = list_client_ops[client_numops];
 		/////printf("PRODUCER: %d, Petition_value: %d, ElementId: %d, Amount: %f\n", id, client_numops, elem.operation_id, elem.amount);
 		
 		// Critical section beggin:
@@ -78,13 +77,15 @@ void *ATM(void *param) { // Producer thread
 			}
 		}
 		
+		elem = list_client_ops[client_numops];
+		client_numops += 1;
+		
 		// Insert in circular buffer the produced element
 		if(queue_put(circular_queue, &elem) < 0){
 		      perror("Failed to enqueue an element");
 		      exit(-1);
 		}
 		
-		client_numops += 1;
 		    
 		// New element produced warn and critical section end:
 		if(pthread_cond_signal(&notEmpty) < 0){
@@ -122,7 +123,7 @@ void *Worker(void *param) { // Consumer thread
 	//Consuming
 	while (worker_numops < amount_to_consume) //each worker must consume as long as there are operations left to consume
 	{
-		
+
 		// Critical section beggin
 		pthread_mutex_lock(&mutex);
 		while (queue_empty(circular_queue)){ // while queue is empty
