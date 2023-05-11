@@ -198,7 +198,8 @@ int main (int argc, const char * argv[] ) {
 	list_client_ops = (struct element*)malloc(MAX_OPS * sizeof(struct element)); //array of elements to be inserted by main process from the text file
 	N_PRODUCERS = atoi(argv[2]);
 	M_CONSUMERS = atoi(argv[3]);
-  	balance[atoi(argv[4])];
+	int max_accounts = atoi(argv[4]);
+  	balance[max_accounts];
 	int size = atoi(argv[5]);
 	circular_queue = queue_init(size);
 	
@@ -207,12 +208,10 @@ int main (int argc, const char * argv[] ) {
     		return -1;
   	}
   	
-  	for (int i = 2; i < 7; i++){ 
-  		if (argv[i] < 0) {
-    			perror("Insert positive arguments please");
-    			return -1;
-    		}
-  	}
+  	if (N_PRODUCERS < 0 || M_CONSUMERS < 0 || max_accounts < 0 || size < 0) {
+    		perror("Insert positive arguments please");
+    		return -1;
+	}
 	
 	// 1) READ FROM FILE
 	
