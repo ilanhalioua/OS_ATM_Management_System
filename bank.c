@@ -192,6 +192,23 @@ void *Worker(void *param) { // Consumer thread
  * @return
  */
  
+int fileLines(const char filename[]) {
+  FILE *file = fopen(filename, "r");
+  if(file == NULL){
+    perror("Error opening file");
+    exit(-1);
+  }
+  char chr;
+  int lines = 0;
+  while (!feof(file)) {
+    chr = fgetc(file);
+    if (chr == '\n') {
+      lines++;
+    }
+  }
+  fclose(file);
+  return lines;
+}
  
 int main (int argc, const char * argv[] ) {
 
@@ -202,6 +219,7 @@ int main (int argc, const char * argv[] ) {
   	balance[max_accounts];
 	int size = atoi(argv[5]);
 	circular_queue = queue_init(size);
+	int nlines;
 	
 	if (argc != 6) {
     		perror("Invalid number of arguments\nUsage: ./bank <file name> <num ATMs> <num workers> <max accounts> <buff size>");
@@ -213,15 +231,15 @@ int main (int argc, const char * argv[] ) {
     		return -1;
 	}
 	
+
+	
 	// 1) READ FROM FILE
 	
 	FILE *fp = fopen(argv[1], "r");
 	    if (fp == NULL) {
 		perror("Error opening file");
 		return -1;
-	    }
-	    
-	    
+	    }   
 	    
 	    //Falta lectura de la primera linea del file!! (Y control de errores)
 	    if(fscanf(fp, "%d\n", &num_ops) < 0){
@@ -229,9 +247,18 @@ int main (int argc, const char * argv[] ) {
     		exit(-1);
   	    }
 	    /////printf("Number of Operations to be processed: %d\n\n", num_ops);
+	    
+	    nlines = fileLines(argv[1]);
+	    /////printf("num_ops:%d vs nlines - 1: %d\n", num_ops, nlines-1);
+	    if (nlines - 1 != num_ops) 
+	    {
+	        perror("Number of operations in file should match with the value in the first line");
+    		return -1;
+	    } 
 
 	    char line[MAX_LINE_LENGTH];
 	    int i = 0;
+	    
 	    while (fgets(line, MAX_LINE_LENGTH, fp) != NULL) {
 	    	// Initialize amount to 0 for each new element
         	list_client_ops[i].amount = 0.0;
