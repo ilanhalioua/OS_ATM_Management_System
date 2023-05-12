@@ -82,7 +82,6 @@ void *ATM(void *param) { // Producer thread
 		      perror("Failed to enqueue an element");
 		      exit(-1);
 		}
-		
 		    
 		// New element produced warn and critical section end:
 		if(pthread_cond_signal(&notEmpty) < 0){
@@ -122,17 +121,26 @@ void *Worker(void *param) { // Consumer thread
 	{
 
 		// Critical section beggin
-		pthread_mutex_lock(&mutex);
+		if (pthread_mutex_lock(&mutex) < 0){
+    			perror("Mutex error");
+    			exit(-1);
+  		}
 		while (queue_empty(circular_queue)){ // while queue is empty
 			if (end == 1) // Queue is empty and we have finished
 			{
 				/////printf("Consumer: %d. End\n", id);
-				pthread_mutex_unlock(&mutex);
+				if (pthread_mutex_unlock(&mutex) < 0){
+    					perror("Mutex error");
+    					exit(-1);
+  				}
 				pthread_exit(0);
 			}
 			
 			// Queue is empty but we have NOT finished
-			pthread_cond_wait(&notEmpty, &mutex); // Sleep until queue is not empty
+			if (pthread_cond_wait(&notEmpty, &mutex) < 0){
+				perror("Condition variable error");
+    				exit(-1);
+			} // Sleep until queue is not empty
 		}
 		
 		// Remove consumed element from circular buffer
@@ -170,8 +178,14 @@ void *Worker(void *param) { // Consumer thread
 		/////printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, bank_numop, data->operation_id);
 		bank_numop +=1;
 		// Element consumed warn and critical section end:
-		pthread_cond_signal(&notFull);
-		pthread_mutex_unlock(&mutex);
+		if (pthread_cond_signal(&notFull) < 0){
+    			perror("Error while warning that queue is not full");
+    			exit(-1);
+  		}
+		if (pthread_mutex_unlock(&mutex) < 0){
+    			perror("Mutex error");
+    			exit(-1);
+  		}
 
 	}
 	
