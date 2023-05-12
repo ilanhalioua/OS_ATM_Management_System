@@ -33,7 +33,7 @@ pthread_cond_t notFull;
 pthread_cond_t notEmpty;
 
 float global_balance = 0.0;
-float account_balance[];
+float *account_balance ;
 
 
 void *ATM(void *param) { // Producer thread
@@ -229,7 +229,7 @@ int main (int argc, const char * argv[] ) {
 	num_workers = atoi(argv[3]);
 	int max_accounts = atoi(argv[4]);
 	int buff_size = atoi(argv[5]);
-  	account_balance[max_accounts];
+  	account_balance = (float*)malloc(max_accounts*sizeof(float));
 	circular_queue = queue_init(buff_size);
 	
 	int nlines;
@@ -354,7 +354,7 @@ int main (int argc, const char * argv[] ) {
 	
 	// create CONSUMERS
 	for (int i=0; i<num_workers; i++) {
-		pthread_create(&(threads[num_ATMs + i]), NULL, Worker, &max_operations);
+	        pthread_create(&(threads[num_ATMs + i]), NULL, Worker, &max_operations);
 		
 		pthread_mutex_lock(&mutex);
 		while (!started) {
