@@ -12,22 +12,18 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-int N_PRODUCERS;
-int M_CONSUMERS;
+int num_ATMs;
+int num_workers;
 
 #define MAX_LINE_LENGTH 100 ///
-#define MAX_OPS 200 ///
-int num_ops;
+int max_operations;
 
-int fin = 0;
+int end = 0;
 struct queue *circular_queue;
 struct element *list_client_ops;
 
-//#define MAX_ELEMENTS 10 /// Given by file (read) CHANGE!! -> num_ops
-int client_numops = 0; //counter of productions
-int worker_numops = 0; //counter of consumptions
-
-// ./bank <file name> <num ATMs> <num workers> <max accounts> <buff size>
+int client_numop = 0; //counter of productions
+int bank_numop = 0; //counter of consumptions
 
 int started = 0; //0 -> 'false', 1 -> 'true'
 pthread_mutex_t mutex;
@@ -36,8 +32,9 @@ pthread_cond_t start;
 pthread_cond_t notFull; 
 pthread_cond_t notEmpty;
 
-float total = 0.0;
-float balance[];
+float global_balance = 0.0;
+float account_balance[];
+
 
 void *ATM(void *param) { // Producer thread
 	// Users through ATM 'produce' bank operations
@@ -60,25 +57,25 @@ void *ATM(void *param) { // Producer thread
   	}
 	
 	//Producing
-	while(client_numops < amount_to_produce) //producer(atm) must work while there are operations to produce
+	while(client_numop < amount_to_produce) //producer(atm) must work while there are operations to produce
 	{	
 	
-		/////printf("PRODUCER: %d, Petition_value: %d, ElementId: %d, Amount: %f\n", id, client_numops, elem.operation_id, elem.amount);
+		/////printf("PRODUCER: %d, Petition_value: %d, ElementId: %d, Amount: %f\n", id, client_numop, elem.operation_id, elem.amount);
 		
 		// Critical section beggin:
 		if (pthread_mutex_lock(&mutex) < 0){
     			perror("Mutex error");
     			exit(-1);
   		}
-		while (queue_full(circular_queue)){ /// while queue is full
+		while (queue_full(circular_queue)){ // while queue is full
 			if (pthread_cond_wait(&notFull, &mutex) < 0){
 				perror("Condition variable error");
     				exit(-1);
 			}
 		}
 		
-		elem = list_client_ops[client_numops];
-		client_numops += 1;
+		elem = list_client_ops[client_numop];
+		client_numop += 1;
 		
 		// Insert in circular buffer the produced element
 		if(queue_put(circular_queue, &elem) < 0){
@@ -121,13 +118,13 @@ void *Worker(void *param) { // Consumer thread
 	pthread_mutex_unlock(&mutex);
 	
 	//Consuming
-	while (worker_numops < amount_to_consume) //each worker must consume as long as there are operations left to consume
+	while (bank_numop < amount_to_consume) //each worker must consume as long as there are operations left to consume
 	{
 
 		// Critical section beggin
 		pthread_mutex_lock(&mutex);
 		while (queue_empty(circular_queue)){ // while queue is empty
-			if (fin == 1) // Queue is empty and we have finished
+			if (end == 1) // Queue is empty and we have finished
 			{
 				/////printf("Consumer: %d. End\n", id);
 				pthread_mutex_unlock(&mutex);
@@ -143,35 +140,35 @@ void *Worker(void *param) { // Consumer thread
 		
 		switch (data->operation_id) {
 		    case 1: // CREATE
-		      balance[data->account_number] = 0;
-		      printf("%d CREATE %d BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, balance[data->account_number], total);
+		      account_balance[data->account_number] = 0;
+		      printf("%d CREATE %d BALANCE=%.0f TOTAL=%.0f\n", bank_numop+1, data->account_number, account_balance[data->account_number], global_balance);
 		      break;
 		    case 2: // DEPOSIT
-		      balance[data->account_number] += data->amount;
-		      total += data->amount;
-		      printf("%d DEPOSIT %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, data->amount, balance[data->account_number], total);
+		      account_balance[data->account_number] += data->amount;
+		      global_balance += data->amount;
+		      printf("%d DEPOSIT %d %.0f BALANCE=%.0f TOTAL=%.0f\n", bank_numop+1, data->account_number, data->amount, account_balance[data->account_number], global_balance);
 		      break;
 		    case 3: // TRANSFER
 		      // Total stays the same (Balance of the accounts change)
-		      balance[data->acc_from] -= data->amount;
-		      balance[data->acc_to] += data->amount;
-		      printf("%d TRANSFER %d %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->acc_from, data->acc_to, data->amount, balance[data->acc_to], total);
+		      account_balance[data->acc_from] -= data->amount;
+		      account_balance[data->acc_to] += data->amount;
+		      printf("%d TRANSFER %d %d %.0f BALANCE=%.0f TOTAL=%.0f\n", bank_numop+1, data->acc_from, data->acc_to, data->amount, account_balance[data->acc_to], global_balance);
 		      break;
 		    case 4: // WITHDRAW
-		      balance[data->account_number] -= data->amount;
-		      total -= data->amount;
-		      printf("%d WITHDRAW %d %.0f BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, data->amount, balance[data->account_number], total);
+		      account_balance[data->account_number] -= data->amount;
+		      global_balance -= data->amount;
+		      printf("%d WITHDRAW %d %.0f BALANCE=%.0f TOTAL=%.0f\n", bank_numop+1, data->account_number, data->amount, account_balance[data->account_number], global_balance);
 		      break;
 		    case 5: // BALANCE
 		      // Nada creo
-		      printf("%d BALANCE %d BALANCE=%.0f TOTAL=%.0f\n", worker_numops+1, data->account_number, balance[data->account_number], total);
+		      printf("%d BALANCE %d BALANCE=%.0f TOTAL=%.0f\n", bank_numop+1, data->account_number, account_balance[data->account_number], global_balance);
 		      break;
 		    default:
 		      perror("Not valid operation");
 		} 
 		
-		/////printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, worker_numops, data->operation_id);
-		worker_numops +=1;
+		/////printf("CONSUMER: %d, Petition_value: %d, ElementId: %d\n", id, bank_numop, data->operation_id);
+		bank_numop +=1;
 		// Element consumed warn and critical section end:
 		pthread_cond_signal(&notFull);
 		pthread_mutex_unlock(&mutex);
@@ -212,13 +209,15 @@ int fileLines(const char filename[]) {
  
 int main (int argc, const char * argv[] ) {
 
-	list_client_ops = (struct element*)malloc(MAX_OPS * sizeof(struct element)); //array of elements to be inserted by main process from the text file
-	N_PRODUCERS = atoi(argv[2]);
-	M_CONSUMERS = atoi(argv[3]);
+	// ./bank <file name> <num ATMs> <num workers> <max accounts> <buff size>	
+	
+	num_ATMs = atoi(argv[2]);
+	num_workers = atoi(argv[3]);
 	int max_accounts = atoi(argv[4]);
-  	balance[max_accounts];
-	int size = atoi(argv[5]);
-	circular_queue = queue_init(size);
+	int buff_size = atoi(argv[5]);
+  	account_balance[max_accounts];
+	circular_queue = queue_init(buff_size);
+	
 	int nlines;
 	
 	if (argc != 6) {
@@ -226,7 +225,7 @@ int main (int argc, const char * argv[] ) {
     		return -1;
   	}
   	
-  	if (N_PRODUCERS < 0 || M_CONSUMERS < 0 || max_accounts < 0 || size < 0) {
+  	if (num_ATMs < 0 || num_workers < 0 || max_accounts < 0 || buff_size < 0) {
     		perror("Insert positive arguments please");
     		return -1;
 	}
@@ -242,15 +241,22 @@ int main (int argc, const char * argv[] ) {
 	    }   
 	    
 	    //Falta lectura de la primera linea del file!! (Y control de errores)
-	    if(fscanf(fp, "%d\n", &num_ops) < 0){
+	    if(fscanf(fp, "%d\n", &max_operations) < 0){
     		perror("Error retrieving data from input file");
     		exit(-1);
   	    }
-	    /////printf("Number of Operations to be processed: %d\n\n", num_ops);
+	    /////printf("Number of Operations to be processed: %d\n\n", max_operations);
+	    
+	    list_client_ops = (struct element*)malloc(max_operations * sizeof(struct element)); //array of elements to be inserted by main process from the text file
+	    
+	    if (max_operations > 200) {
+	    	perror("Maximum number of operations is: 200");
+    		return -1;
+	    }
 	    
 	    nlines = fileLines(argv[1]);
-	    /////printf("num_ops:%d vs nlines - 1: %d\n", num_ops, nlines-1);
-	    if (nlines - 1 != num_ops) 
+	    /////printf("max_operations:%d vs nlines - 1: %d\n", max_operations, nlines-1);
+	    if (nlines - 1 != max_operations) 
 	    {
 	        perror("Number of operations in file should match with the value in the first line");
     		return -1;
@@ -312,7 +318,7 @@ int main (int argc, const char * argv[] ) {
 	// ------ delete
 	
 	void *retval;
-	pthread_t threads[N_PRODUCERS + M_CONSUMERS];
+	pthread_t threads[num_ATMs + num_workers];
 	
 	// initialize
 	pthread_mutex_init(&mutex, NULL);
@@ -321,8 +327,8 @@ int main (int argc, const char * argv[] ) {
 	pthread_cond_init(&notEmpty, NULL);
 	
 	// create PRODUCERS
-	for (int i=0; i<N_PRODUCERS; i++) {
-		pthread_create(&(threads[i]), NULL, ATM, &num_ops);
+	for (int i=0; i<num_ATMs; i++) {
+		pthread_create(&(threads[i]), NULL, ATM, &max_operations);
 		
 		pthread_mutex_lock(&mutex);
 		while (!started) {
@@ -333,8 +339,8 @@ int main (int argc, const char * argv[] ) {
 	}
 	
 	// create CONSUMERS
-	for (int i=0; i<M_CONSUMERS; i++) {
-		pthread_create(&(threads[N_PRODUCERS + i]), NULL, Worker, &num_ops);
+	for (int i=0; i<num_workers; i++) {
+		pthread_create(&(threads[num_ATMs + i]), NULL, Worker, &max_operations);
 		
 		pthread_mutex_lock(&mutex);
 		while (!started) {
@@ -345,19 +351,19 @@ int main (int argc, const char * argv[] ) {
 	}
 	
 	// wait PRODUCERS exectution end
-	for (int i=0; i<N_PRODUCERS; i++) {
+	for (int i=0; i<num_ATMs; i++) {
 		pthread_join(threads[i], &retval);
 	}
 	
 	// CONSUMERS get the signal when PRODUCERS exectution end
 	pthread_mutex_lock(&mutex);
-	fin = 1;
+	end = 1;
 	pthread_cond_broadcast(&notEmpty);
 	pthread_mutex_unlock(&mutex);
 	
 	// wait CONSUMERS exectution end
-	for (int i=0; i<M_CONSUMERS; i++) {
-		pthread_join(threads[N_PRODUCERS + i], &retval);
+	for (int i=0; i<num_workers; i++) {
+		pthread_join(threads[num_ATMs + i], &retval);
 	}
 	
 	// destroy
